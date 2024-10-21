@@ -1,0 +1,72 @@
+trigger:
+  - none
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  frontPath: "./EmployeeCrudAngular"
+  backPath: "./EmployeeCrudApi"
+
+  nodeVersion: "18.19.0"
+  solution: "**/*.sln"
+  buildConfiguration: "Release"
+  azureSubs: "Azure subscription 1(9a4dd3e5-d25c-4610-b198-5b4caf20a81b)"
+  azureResourceManager: "Azure Resource Manager subscription 1"
+
+  acrLoginServer: "crtp8.azurecr.io"
+  acrName: "crtp8"
+  backImageName: "vgaggio-employee-crud-api"
+  frontImageName: "vgaggio-employee-crud-front"
+
+  webAppBackNameQA: "vgaggio-webapp-employee-crud-back-qa"
+  webAppFrontNameQA: "vgaggio-webapp-employee-crud-front-qa"
+  webAppBackNamePROD: "vgaggio-webapp-employee-crud-back-prod"
+  webAppFrontNamePROD: "vgaggio-webapp-employee-crud-front-prod"
+
+  resourceGroupName: "trabajo-practico-08"
+  backImageTag: "latest"
+  frontImageTag: "latest"
+
+  containerInstanceBackNameQA: "vgaggio-container-employee-crud-back-qa"
+  container-cpu-back-qa: 1
+  container-memory-back-qa: 1.5
+
+  containerInstanceFrontNameQA: "vgaggio-container-employee-crud-front-qa"
+  container-cpu-front-qa: 1
+  container-memory-front-qa: 1.5
+
+  containerInstanceBackNamePROD: "vgaggio-container-employee-crud-back-prod"
+  container-cpu-back-prod: 1
+  container-memory-back-prod: 1.5
+
+  containerInstanceFrontNamePROD: "vgaggio-container-employee-crud-front-prod"
+  container-cpu-front-prod: 1
+  container-memory-front-prod: 1.5
+
+  appServicePlanLinux: "VGaggioAppServicePlan"
+  appServicePlanWindows: "VGaggioWinAppServicePlan"
+
+  webAppBackContainerNameQA: "vgaggio-webapp-container-employee-crud-back-qa"
+  webAppFrontContainerNameQA: "vgaggio-webapp-container-employee-crud-front-qa"
+  webAppBackContainerNamePROD: "vgaggio-webapp-container-employee-crud-back-prod"
+  webAppFrontContainerNamePROD: "vgaggio-webapp-container-employee-crud-front-prod"
+
+  APPSERVICES_API_URL_QA: "https://$(webAppBackNameQA).azurewebsites.net/"
+  APPSERVICES_API_URL_PROD: "https://$(webAppBackNamePROD).azurewebsites.net/"
+  APPSERVICESCONTAINER_API_URL_QA: "https://$(webAppBackContainerNameQA).azurewebsites.net/"
+  APPSERVICESCONTAINER_API_URL_PROD: "https://$(webAppBackContainerNamePROD).azurewebsites.net/"
+  CONTAINERINSTANCES_API_URL_QA: "http://$(containerInstanceBackNameQA).eastus.azurecontainer.io/"
+  CONTAINERINSTANCES_API_URL_PROD: "http://$(containerInstanceBackNamePROD).eastus.azurecontainer.io/"
+
+stages:
+  - template: yml-templates/BuildAndTest.yml
+  - template: yml-templates/DockerBuildAndPush.yml
+
+  - template: yml-templates/AppServicesDeployQA.yml
+  - template: yml-templates/ContainerInstancesDeployQA.yml
+  - template: yml-templates/AppServicesContainerDeployQA.yml
+
+  - template: yml-templates/AppServicesDeployPROD.yml
+  - template: yml-templates/ContainerInstancesDeployPROD.yml
+  - template: yml-templates/AppServicesContainerDeployPROD.yml

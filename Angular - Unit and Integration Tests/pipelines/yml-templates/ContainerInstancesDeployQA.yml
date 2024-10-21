@@ -1,0 +1,98 @@
+stages:
+  - stage: DeployToACIQA
+    displayName: "[QA] - Deploy Images to Container Instances"
+    dependsOn: [DockerBuildAndPush]
+    jobs:
+      - job: BackEnd
+        displayName: "Back-End"
+        dependsOn: []
+        pool:
+          vmImage: ubuntu-latest
+
+        steps:
+          - task: AzureCLI@2
+            displayName: "Deploy Back-End Image To ACI"
+            inputs:
+              azureSubscription: "$(azureResourceManager)"
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                echo "Resource Group: $(resourceGroupName)"
+                echo "Container Instance Name: $(containerInstanceBackNameQA)"
+                echo "ACR Login Server: $(acrLoginServer)"
+                echo "Image Name: $(backImageName)"
+                echo "Image Tag: $(backImageTag)"
+                echo "Connection String: $(cnn-string-qa)"
+
+                az container delete --resource-group $(resourceGroupName) --name $(containerInstanceBackNameQA) --yes
+
+                az container create --resource-group $(resourceGroupName) \
+                --name $(containerInstanceBackNameQA) \
+                --image $(acrLoginServer)/$(backImageName):$(backImageTag) \
+                --registry-login-server $(acrLoginServer) \
+                --registry-username $(acrName) \
+                --registry-password $(az acr credential show --name $(acrName) --query "passwords[0].value" -o tsv) \
+                --dns-name-label $(containerInstanceBackNameQA) \
+                --ports 80 \
+                --environment-variables ConnectionStrings__DefaultConnection="$(cnn-string-qa)" \
+                --restart-policy Always \
+                --cpu $(container-cpu-back-qa) \
+                --memory $(container-memory-back-qa)
+
+      - job: FrontEnd
+        displayName: "Front-End"
+        dependsOn: []
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: AzureCLI@2
+            displayName: "Deploy Front-End Image To ACI"
+            inputs:
+              azureSubscription: "$(azureResourceManager)"
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                echo "Resource Group: $(resourceGroupName)"
+                echo "Container Instance Name: $(containerInstanceFrontNameQA)"
+                echo "ACR Login Server: $(acrLoginServer)"
+                echo "Image Name: $(frontImageName)"
+                echo "Image Tag: $(frontImageTag)"
+                echo "Api Url: $(CONTAINERINSTANCES_API_URL_QA)"
+
+                az container delete --resource-group $(resourceGroupName) --name $(containerInstanceFrontNameQA) --yes
+
+                az container create --resource-group $(resourceGroupName) \
+                --name $(containerInstanceFrontNameQA) \
+                --image $(acrLoginServer)/$(frontImageName):$(frontImageTag) \
+                --registry-login-server $(acrLoginServer) \
+                --registry-username $(acrName) \
+                --registry-password $(az acr credential show --name $(acrName) --query "passwords[0].value" -o tsv) \
+                --dns-name-label $(containerInstanceFrontNameQA) \
+                --ports 80 \
+                --environment-variables API_URL="$(CONTAINERINSTANCES_API_URL_QA)" \
+                --restart-policy Always \
+                --cpu $(container-cpu-front-qa) \
+                --memory $(container-memory-front-qa)
+
+      - job: IntegrationTesting
+        displayName: "Integrations Tests"
+        dependsOn: [BackEnd, FrontEnd]
+        variables:
+          baseUrl: "$(containerInstanceFrontNameQA).eastus.azurecontainer.io"
+
+        steps:
+          - script: |
+              cd $(Build.SourcesDirectory)/EmployeeCrudAngular
+              npm install typescript ts-node
+            displayName: "Install TypeScript"
+
+          - script: |
+              cd $(Build.SourcesDirectory)/EmployeeCrudAngular
+              npx cypress run --config-file cypress.config.ts --env baseUrl=$(baseUrl)
+            displayName: "Run Cypress E2E Tests"
+
+          - task: PublishTestResults@2
+            inputs:
+              testResultsFiles: "$(Build.SourcesDirectory)/EmployeeCrudAngular/cypress/results/*.xml"
+              testRunTitle: "Cypress E2E Tests (QA)"
+            displayName: "Publish Cypress Test Results"

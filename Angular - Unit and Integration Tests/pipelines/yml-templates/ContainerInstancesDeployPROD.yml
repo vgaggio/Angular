@@ -1,0 +1,76 @@
+stages:
+  - stage: DeployToACIPROD
+    displayName: "[PROD] - Deploy Images to Container Instances"
+    dependsOn: [DeployToACIQA]
+    jobs:
+      - deployment: BackEnd
+        displayName: "Back-End"
+        environment: "Production"
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureCLI@2
+                  displayName: "Deploy Back-End Image To ACI"
+                  inputs:
+                    azureSubscription: "$(azureResourceManager)"
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      echo "Resource Group: $(resourceGroupName)"
+                      echo "Container Instance Name: $(containerInstanceBackNamePROD)"
+                      echo "ACR Login Server: $(acrLoginServer)"
+                      echo "Image Name: $(backImageName)"
+                      echo "Image Tag: $(backImageTag)"
+                      echo "Connection String: $(cnn-string-prod)"
+
+                      az container delete --resource-group $(resourceGroupName) --name $(containerInstanceBackNamePROD) --yes
+
+                      az container create --resource-group $(resourceGroupName) \
+                      --name $(containerInstanceBackNamePROD) \
+                      --image $(acrLoginServer)/$(backImageName):$(backImageTag) \
+                      --registry-login-server $(acrLoginServer) \
+                      --registry-username $(acrName) \
+                      --registry-password $(az acr credential show --name $(acrName) --query "passwords[0].value" -o tsv) \
+                      --dns-name-label $(containerInstanceBackNamePROD) \
+                      --ports 80 \
+                      --environment-variables ConnectionStrings__DefaultConnection="$(cnn-string-prod)" \
+                      --restart-policy Always \
+                      --cpu $(container-cpu-back-prod) \
+                      --memory $(container-memory-back-prod)
+
+      - deployment: FrontEnd
+        displayName: "Front-End"
+        environment: "Production"
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureCLI@2
+                  displayName: "Deploy Front-End Image To ACI"
+                  inputs:
+                    azureSubscription: "$(azureResourceManager)"
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      echo "Resource Group: $(resourceGroupName)"
+                      echo "Container Instance Name: $(containerInstanceFrontNamePROD)"
+                      echo "ACR Login Server: $(acrLoginServer)"
+                      echo "Image Name: $(frontImageName)"
+                      echo "Image Tag: $(frontImageTag)"
+                      echo "Api Url: $(CONTAINERINSTANCES_API_URL_PROD)"
+
+                      az container delete --resource-group $(resourceGroupName) --name $(containerInstanceFrontNamePROD) --yes
+
+                      az container create --resource-group $(resourceGroupName) \
+                      --name $(containerInstanceFrontNamePROD) \
+                      --image $(acrLoginServer)/$(frontImageName):$(frontImageTag) \
+                      --registry-login-server $(acrLoginServer) \
+                      --registry-username $(acrName) \
+                      --registry-password $(az acr credential show --name $(acrName) --query "passwords[0].value" -o tsv) \
+                      --dns-name-label $(containerInstanceFrontNamePROD) \
+                      --ports 80 \
+                      --environment-variables API_URL="$(CONTAINERINSTANCES_API_URL_PROD)" \
+                      --restart-policy Always \
+                      --cpu $(container-cpu-front-prod) \
+                      --memory $(container-memory-front-prod)

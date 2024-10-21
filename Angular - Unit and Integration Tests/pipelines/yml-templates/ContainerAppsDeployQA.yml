@@ -1,0 +1,95 @@
+stages:
+  - stage: DeployToContainerAppsQA
+    displayName: "[QA] - Deploy Images to Container Apps"
+    dependsOn: [DockerBuildAndPush]
+    jobs:
+      - job: BackEnd
+        displayName: "Back-End"
+        dependsOn: []
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: AzureCLI@2
+            displayName: "Deploy Back-End Image To Container Apps"
+            inputs:
+              azureSubscription: "$(azureResourceManager)"
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                echo "Resource Group: $(resourceGroupName)"
+                echo "Container App Name: $(containerAppsBackNameQA)"
+                echo "ACR Login Server: $(acrLoginServer)"
+                echo "Image Name: $(backImageName)"
+                echo "Image Tag: $(backImageTag)"
+                echo "Connection String: $(cnn-string-qa)"
+
+                az containerapp create \
+                  --resource-group $(resourceGroupName) \
+                  --name $(containerAppsBackNameQA) \
+                  --environment $(containerAppsEnv) \
+                  --image $(acrLoginServer)/$(backImageName):$(backImageTag) \
+                  --registry-server $(acrLoginServer) \
+                  --registry-username $(acrName) \
+                  --registry-password $(az acr credential show --name $(acrName) --query "passwords[0].value" -o tsv) \
+                  --cpu 0.25 \
+                  --memory 0.5 \
+                  --env-vars ConnectionStrings__DefaultConnection="$(cnn-string-qa)" \
+                  --ingress 'external' \
+                  --target-port 80
+
+      - job: FrontEnd
+        displayName: "Front-End"
+        dependsOn: []
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: AzureCLI@2
+            displayName: "Deploy Front-End Image To Container Apps"
+            inputs:
+              azureSubscription: "$(azureResourceManager)"
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                echo "Resource Group: $(resourceGroupName)"
+                echo "Container App Name: $(containerAppsFrontNameQA)"
+                echo "ACR Login Server: $(acrLoginServer)"
+                echo "Image Name: $(frontImageName)"
+                echo "Image Tag: $(frontImageTag)"
+                echo "Api Url: $(API_URL_QA)"
+
+                az containerapp create \
+                  --resource-group $(resourceGroupName) \
+                  --name $(containerAppsFrontNameQA) \
+                  --environment $(containerAppsEnv) \
+                  --image $(acrLoginServer)/$(frontImageName):$(frontImageTag) \
+                  --registry-server $(acrLoginServer) \
+                  --registry-username $(acrName) \
+                  --registry-password $(az acr credential show --name $(acrName) --query "passwords[0].value" -o tsv) \
+                  --cpu 0.25 \
+                  --memory 0.5 \
+                  --env-vars API_URL="$(CONTAINERAPPS_API_URL_QA)" \
+                  --ingress 'external' \
+                  --target-port 80
+
+      - job: IntegrationTesting
+        displayName: "Integrations Tests"
+        dependsOn: [BackEnd, FrontEnd]
+        variables:
+          baseUrl: "https://$(containerAppsFrontNameQA).lemonsea-dcf60123.eastus.azurecontainerapps.io"
+
+        steps:
+          - script: |
+              cd $(Build.SourcesDirectory)/EmployeeCrudAngular
+              npm install typescript ts-node
+            displayName: "Install TypeScript"
+
+          - script: |
+              cd $(Build.SourcesDirectory)/EmployeeCrudAngular
+              npx cypress run --config-file cypress.config.ts --env baseUrl=$(baseUrl)
+            displayName: "Run Cypress E2E Tests"
+
+          - task: PublishTestResults@2
+            inputs:
+              testResultsFiles: "$(Build.SourcesDirectory)/EmployeeCrudAngular/cypress/results/*.xml"
+              testRunTitle: "Cypress E2E Tests (QA)"
+            displayName: "Publish Cypress Test Results"

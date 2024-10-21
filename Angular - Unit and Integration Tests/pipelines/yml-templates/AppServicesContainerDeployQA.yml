@@ -1,0 +1,85 @@
+stages:
+  - stage: DeployToAppServicesContainerQA
+    displayName: "[QA] - Deploy Images to App Services Container"
+    dependsOn: [DockerBuildAndPush]
+    jobs:
+      - job: BackEnd
+        displayName: "Back-End"
+        dependsOn: []
+        pool:
+          vmImage: "ubuntu-latest"
+        steps:
+          - task: AzureCLI@2
+            displayName: "Verify and create the Azure App Service resource for BACK (QA)"
+            inputs:
+              azureSubscription: "$(azureResourceManager)"
+              scriptType: "bash"
+              scriptLocation: "inlineScript"
+              inlineScript: |
+                if ! az webapp list --query "[?name=='$(webAppBackContainerNameQA)' && resourceGroup=='$(resourceGroupName)'] | length(@)" -o tsv | grep -q '^1$'; then
+                  echo "The App Service for Back-End (QA) does not exist. Creating..."
+                  az webapp create --resource-group $(resourceGroupName) --plan $(appServicePlanLinux) --name $(webAppBackContainerNameQA) --deployment-container-image-name "nginx"
+                else
+                  echo "The App Service for Back-End (QA) already exists. Updating the image..."
+                fi
+
+                az webapp config container set --name $(webAppBackContainerNameQA) --resource-group $(resourceGroupName) \
+                  --container-image-name $(acrLoginServer)/$(backImageName):$(backImageTag) \
+                  --container-registry-url https://$(acrLoginServer) \
+                  --container-registry-user $(acrName) \
+                  --container-registry-password $(az acr credential show --name $(acrName) --query "passwords[0].value" -o tsv)
+
+                az webapp config appsettings set --name $(webAppBackContainerNameQA) --resource-group $(resourceGroupName) \
+                  --settings ConnectionStrings__DefaultConnection="$(cnn-string-qa)" \
+
+      - job: FrontEnd
+        displayName: "Front-End"
+        dependsOn: []
+        pool:
+          vmImage: "ubuntu-latest"
+        steps:
+          - task: AzureCLI@2
+            displayName: "Verify and create the Azure App Service resource for FRONT (QA)"
+            inputs:
+              azureSubscription: "$(azureResourceManager)"
+              scriptType: "bash"
+              scriptLocation: "inlineScript"
+              inlineScript: |
+                if ! az webapp list --query "[?name=='$(webAppFrontContainerNameQA)' && resourceGroup=='$(resourceGroupName)'] | length(@)" -o tsv | grep -q '^1$'; then
+                  echo "The App Service for Front-End (QA) does not exist. Creating..."
+                  az webapp create --resource-group $(resourceGroupName) --plan $(appServicePlanLinux) --name $(webAppFrontContainerNameQA) --deployment-container-image-name "nginx"
+                else
+                  echo "The App Service for Front-End (QA) already exists. Updating the image..."
+                fi
+
+                az webapp config container set --name $(webAppFrontContainerNameQA) --resource-group $(resourceGroupName) \
+                  --container-image-name $(acrLoginServer)/$(frontImageName):$(frontImageTag) \
+                  --container-registry-url https://$(acrLoginServer) \
+                  --container-registry-user $(acrName) \
+                  --container-registry-password $(az acr credential show --name $(acrName) --query "passwords[0].value" -o tsv)
+
+                az webapp config appsettings set --name $(webAppFrontContainerNameQA) --resource-group $(resourceGroupName) \
+                  --settings API_URL="$(APPSERVICESCONTAINER_API_URL_QA)" \
+
+      - job: IntegrationTesting
+        displayName: "Integrations Tests"
+        dependsOn: [BackEnd, FrontEnd]
+        variables:
+          baseUrl: "https://$(webAppFrontContainerNameQA).azurewebsites.net"
+
+        steps:
+          - script: |
+              cd $(Build.SourcesDirectory)/EmployeeCrudAngular
+              npm install typescript ts-node
+            displayName: "Install TypeScript"
+
+          - script: |
+              cd $(Build.SourcesDirectory)/EmployeeCrudAngular
+              npx cypress run --config-file cypress.config.ts --env baseUrl=$(baseUrl)
+            displayName: "Run Cypress E2E Tests"
+
+          - task: PublishTestResults@2
+            inputs:
+              testResultsFiles: "$(Build.SourcesDirectory)/EmployeeCrudAngular/cypress/results/*.xml"
+              testRunTitle: "Cypress E2E Tests (QA)"
+            displayName: "Publish Cypress Test Results"

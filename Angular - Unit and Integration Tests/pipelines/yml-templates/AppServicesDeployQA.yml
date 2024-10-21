@@ -1,0 +1,145 @@
+stages:
+  - stage: DeployToAppServicesQA
+    displayName: "[QA] - Deploy to App Services"
+    dependsOn: [BuildAndTest]
+    jobs:
+      - job: BackEnd
+        displayName: "Back-End"
+        pool:
+          vmImage: "ubuntu-latest"
+        steps:
+          - task: DownloadPipelineArtifact@2
+            displayName: "Download Back-End Artifacts"
+            inputs:
+              buildType: "current"
+              artifactName: "backend-drop"
+              targetPath: "$(Pipeline.Workspace)/backend-drop"
+
+          - task: AzureCLI@2
+            displayName: "Verify and Create the Azure App Service Resource for Back-End (QA)"
+            inputs:
+              azureSubscription: "$(azureSubs)"
+              scriptType: "bash"
+              scriptLocation: "inlineScript"
+              inlineScript: |
+                set -e
+
+                RESOURCE_GROUP="$(resourceGroupName)"
+                WEBAPP_NAME="$(webAppBackNameQA)"
+                APP_SERVICE_PLAN="$(appServicePlanWindows)"
+                RUNTIME="DOTNET|6.0"
+
+                app_exists=$(az webapp list \
+                  --resource-group "$RESOURCE_GROUP" \
+                  --query "[?name=='$WEBAPP_NAME'].name" \
+                  --output tsv)
+
+                if [ -z "$app_exists" ]; then
+                  az webapp create \
+                    --resource-group "$RESOURCE_GROUP" \
+                    --plan "$APP_SERVICE_PLAN" \
+                    --name "$WEBAPP_NAME" \
+                    --runtime "$RUNTIME"
+                fi
+
+                az webapp config appsettings set \
+                  --name "$WEBAPP_NAME" \
+                  --resource-group "$RESOURCE_GROUP" \
+                  --settings ConnectionStrings__DefaultConnection="$(cnn-string-qa)" \
+                             ASPNETCORE_ENVIRONMENT="QA"
+
+          - task: AzureWebApp@1
+            displayName: "Deploy Back-End Artifacts"
+            inputs:
+              azureSubscription: "$(azureSubs)"
+              appType: "webApp"
+              appName: "$(webAppBackNameQA)"
+              package: "$(Pipeline.Workspace)/backend-drop/api"
+              deploymentMethod: "auto"
+
+      - job: FrontEnd
+        displayName: "Front-End"
+        pool:
+          vmImage: "ubuntu-latest"
+        steps:
+          - task: DownloadPipelineArtifact@2
+            displayName: "Download Front-End Artifacts"
+            inputs:
+              buildType: "current"
+              artifactName: "frontend-drop"
+              targetPath: "$(Pipeline.Workspace)/frontend-drop"
+
+          - task: PowerShell@2
+            displayName: "Create and Copy env.js to App Service"
+            inputs:
+              targetType: "inline"
+              script: |
+                $envJsContent = "window['env'] = { apiUrl: '$(APPSERVICES_API_URL_QA)' };"
+                $envJsPath = "$(Pipeline.Workspace)/frontend-drop/assets/env.js"
+                New-Item -ItemType File -Path $envJsPath -Force
+                Set-Content -Path $envJsPath -Value $envJsContent
+
+          - task: AzureCLI@2
+            displayName: "Verify and Create the Azure App Service Resource for Front-End (QA)"
+            inputs:
+              azureSubscription: "$(azureSubs)"
+              scriptType: "bash"
+              scriptLocation: "inlineScript"
+              inlineScript: |
+                set -e
+
+                RESOURCE_GROUP="$(resourceGroupName)"
+                WEBAPP_NAME="$(webAppFrontNameQA)"
+                APP_SERVICE_PLAN="$(appServicePlanWindows)"
+                RUNTIME="NODE|18LTS"
+
+                app_exists=$(az webapp list \
+                  --resource-group "$RESOURCE_GROUP" \
+                  --query "[?name=='$WEBAPP_NAME'].name" \
+                  --output tsv)
+
+                if [ -z "$app_exists" ]; then
+                  az webapp create \
+                    --resource-group "$RESOURCE_GROUP" \
+                    --plan "$APP_SERVICE_PLAN" \
+                    --name "$WEBAPP_NAME" \
+                    --runtime "$RUNTIME"
+                fi
+
+                az webapp config appsettings set \
+                  --name "$WEBAPP_NAME" \
+                  --resource-group "$RESOURCE_GROUP" \
+                  --settings API_URL="$(APPSERVICES_API_URL_QA)"
+
+          - task: AzureWebApp@1
+            displayName: "Deploy Front-End Artifacts"
+            inputs:
+              azureSubscription: "$(azureSubs)"
+              appType: "webApp"
+              appName: "$(webAppFrontNameQA)"
+              package: "$(Pipeline.Workspace)/frontend-drop"
+              deploymentMethod: "auto"
+
+      - job: IntegrationTesting
+        displayName: "Integration Tests"
+        dependsOn: [BackEnd, FrontEnd]
+        variables:
+          baseUrl: "https://$(webAppFrontNameQA).azurewebsites.net"
+        pool:
+          vmImage: "ubuntu-latest"
+        steps:
+          - script: |
+              cd $(Build.SourcesDirectory)/EmployeeCrudAngular
+              npm install typescript ts-node
+            displayName: "Install TypeScript"
+
+          - script: |
+              cd $(Build.SourcesDirectory)/EmployeeCrudAngular
+              npx cypress run --config-file cypress.config.ts --env baseUrl=$(baseUrl)
+            displayName: "Run Cypress E2E Tests"
+
+          - task: PublishTestResults@2
+            inputs:
+              testResultsFiles: "$(Build.SourcesDirectory)/EmployeeCrudAngular/cypress/results/*.xml"
+              testRunTitle: "Cypress E2E Tests (QA)"
+            displayName: "Publish Cypress Test Results"

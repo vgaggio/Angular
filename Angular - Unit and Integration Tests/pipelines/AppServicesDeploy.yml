@@ -1,0 +1,210 @@
+trigger:
+  - none
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  nodeVersion: "18.19.0"
+  frontPath: "./EmployeeCrudAngular"
+  backPath: "./EmployeeCrudApi"
+  solution: "**/*.sln"
+  buildConfiguration: "Release"
+  webAppBackName: "vgaggio-QA"
+  webAppFrontName: "vgaggio-prod"
+  azureSubs: "Azure subscription 1(9a4dd3e5-d25c-4610-b198-5b4caf20a81b)"
+  sonarCloudSubs: "SonarCloud subscription"
+  sonarCloudOrg: "vgaggio"
+  sonarCloudProjectKey: "vgaggiolr_Angular---Unit-and-Integration-Tests"
+  sonarCloudProjectName: "Angular - Unit and Integration Tests"
+
+stages:
+  - stage: Build
+    displayName: "Build Back-End and Front-End"
+    dependsOn: []
+    jobs:
+      - job: BuildBackEndAndFrontEnd
+        displayName: "Build and Test Back-End and Front-End"
+        steps:
+          - checkout: self
+            fetchDepth: 0
+
+          - task: DotNetCoreCLI@2
+            displayName: "Restore NuGet Packages"
+            inputs:
+              command: restore
+              projects: "$(solution)"
+
+          - task: SonarCloudPrepare@2
+            displayName: "Prepare SonarCloud Analysis"
+            inputs:
+              SonarCloud: $(sonarCloudSubs)
+              organization: $(sonarCloudOrg)
+              scannerMode: "MSBuild"
+              projectKey: $(sonarCloudProjectKey)
+              projectName: $(sonarCloudProjectName)
+              extraProperties: |
+                sonar.sources=$(frontPath)
+                sonar.exclusions=**/node_modules/**, **/*.spec.ts, **/wwwroot/**
+                sonar.typescript.tsconfigPath=$(frontPath)/tsconfig.json
+                sonar.sourceEncoding=UTF-8
+
+          - task: DotNetCoreCLI@2
+            displayName: "Run Back-End Tests"
+            inputs:
+              command: "test"
+              projects: "**/*.Tests.csproj"
+              arguments: '--configuration $(buildConfiguration) --collect:"XPlat Code Coverage"'
+
+          - task: PublishCodeCoverageResults@2
+            displayName: "Publish Back-End Code Coverage Results"
+            inputs:
+              codeCoverageTool: "cobertura"
+              summaryFileLocation: "$(Agent.TempDirectory)/**/coverage.cobertura.xml"
+              failIfCoverageEmpty: false
+
+          - task: UseNode@1
+            displayName: "Install Node.js"
+            inputs:
+              version: "$(nodeVersion)"
+
+          - script: |
+              npm config set fund false
+              npm install -g @angular/cli --no-audit
+              npm install --no-audit
+            displayName: "Install Front-End Dependencies"
+            workingDirectory: $(frontPath)
+
+          - task: Cache@2
+            inputs:
+              key: 'npm | "$(Agent.OS)" | $(frontPath)/package-lock.json'
+              path: "$(frontPath)/node_modules"
+              restoreKeys: |
+                npm | "$(Agent.OS)"
+            displayName: "Cache dependences"
+
+          - script: |
+              npx ng test --karma-config=karma.conf.js --watch=false --browsers ChromeHeadless --code-coverage
+            displayName: "Run Front-End Tests"
+            workingDirectory: $(frontPath)
+            continueOnError: true
+
+          - task: PublishCodeCoverageResults@2
+            displayName: "Publish Front-End Code Coverage Results"
+            inputs:
+              summaryFileLocation: "$(frontPath)/coverage/lcov.info"
+              failIfCoverageEmpty: false
+            condition: always()
+
+          - task: PublishTestResults@2
+            inputs:
+              testResultsFormat: "JUnit"
+              testResultsFiles: "$(frontPath)/test-results/test-results.xml"
+              failTaskOnFailedTests: true
+            condition: always()
+            displayName: "Publish Front-End Test Results"
+
+          - task: DotNetCoreCLI@2
+            displayName: "Build Back-End Solution"
+            inputs:
+              command: build
+              projects: "$(solution)"
+              arguments: "--configuration $(buildConfiguration)"
+
+          - script: |
+              ng build --configuration production
+            displayName: "Build Front-End Application"
+            workingDirectory: $(frontPath)
+
+          - task: SonarCloudAnalyze@2
+            displayName: "Run SonarCloud Analysis"
+
+          - task: SonarCloudPublish@2
+            displayName: "Publish SonarCloud Quality Gate Results"
+            inputs:
+              pollingTimeoutSec: "300"
+
+          - task: DotNetCoreCLI@2
+            displayName: "Publish Back-End"
+            inputs:
+              command: publish
+              publishWebProjects: true
+              arguments: "--configuration $(buildConfiguration) --output $(Build.ArtifactStagingDirectory)/backend"
+              zipAfterPublish: true
+
+          - task: PublishBuildArtifacts@1
+            displayName: "Publish Back-End Artifacts"
+            inputs:
+              PathtoPublish: "$(Build.ArtifactStagingDirectory)/backend"
+              ArtifactName: "backend-drop"
+              publishLocation: "Container"
+
+          - task: PublishBuildArtifacts@1
+            displayName: "Publish Front-End Artifacts"
+            inputs:
+              PathtoPublish: "$(frontPath)/dist"
+              ArtifactName: "frontend-drop"
+              publishLocation: "Container"
+
+  - stage: DeployToQA
+    displayName: "Deploy to QA"
+    dependsOn: [Build]
+    jobs:
+      - job: DeployBackToQA
+        displayName: "Deploy Back-End to QA Environment"
+        steps:
+          - task: DownloadPipelineArtifact@2
+            displayName: "Download Back-End Artifacts"
+            inputs:
+              buildType: "current"
+              artifactName: "backend-drop"
+              targetPath: "$(Pipeline.Workspace)/backend-drop"
+
+          - task: AzureWebApp@1
+            displayName: "Deploy Back-End Artifacts"
+            inputs:
+              azureSubscription: "$(azureSubs)"
+              appType: "webApp"
+              appName: "$(webAppBackName)"
+              package: "$(Pipeline.Workspace)/backend-drop/*.zip"
+              deploymentMethod: "auto"
+
+      - job: DeployFrontToQA
+        displayName: "Deploy Front-End to QA Environment"
+        steps:
+          - task: DownloadPipelineArtifact@2
+            displayName: "Download Front-End Artifacts"
+            inputs:
+              buildType: "current"
+              artifactName: "frontend-drop"
+              targetPath: "$(Pipeline.Workspace)/frontend-drop"
+
+          - task: AzureWebApp@1
+            displayName: "Deploy Front-End Artifacts"
+            inputs:
+              azureSubscription: "$(azureSubs)"
+              appType: "webApp"
+              appName: "$(webAppFrontName)"
+              package: "$(Pipeline.Workspace)/frontend-drop/employee-crud-angular/browser"
+              deploymentMethod: "auto"
+
+      - job: RunCypressTests
+        displayName: "Run Cypress Tests"
+        dependsOn: [DeployBackToQA, DeployFrontToQA]
+        steps:
+          - script: npm install typescript ts-node
+            workingDirectory: $(Build.SourcesDirectory)/EmployeeCrudAngular
+            displayName: "Install TypeScript"
+
+          - script: |
+              npx cypress run
+            workingDirectory: $(Build.SourcesDirectory)/EmployeeCrudAngular
+            displayName: "Run Cypress Tests"
+            continueOnError: true
+
+          - task: PublishTestResults@2
+            inputs:
+              testResultsFiles: "$(Build.SourcesDirectory)/EmployeeCrudAngular/cypress/results/*.xml"
+              testRunTitle: "Cypress E2E Tests (QA)"
+              failTaskOnFailedTests: true
+            displayName: "Publish Cypress Test Results"

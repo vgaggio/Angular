@@ -1,0 +1,64 @@
+stages:
+  - stage: DeployToAppServicesContainerPROD
+    displayName: "[PROD] - Deploy Images to App Services Container"
+    dependsOn: [DeployToAppServicesContainerQA]
+    jobs:
+      - deployment: BackEnd
+        displayName: "Back-End"
+        environment: "Production"
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureCLI@2
+                  displayName: "Verify and create the Azure App Service resource for BACK (PROD)"
+                  inputs:
+                    azureSubscription: "$(azureResourceManager)"
+                    scriptType: "bash"
+                    scriptLocation: "inlineScript"
+                    inlineScript: |
+                      if ! az webapp list --query "[?name=='$(webAppBackContainerNamePROD)' && resourceGroup=='$(resourceGroupName)'] | length(@)" -o tsv | grep -q '^1$'; then
+                        echo "The App Service for Back-End (QA) does not exist. Creating..."
+                        az webapp create --resource-group $(resourceGroupName) --plan $(appServicePlanLinux) --name $(webAppBackContainerNamePROD) --deployment-container-image-name "nginx"
+                      else
+                        echo "The App Service for Back-End (QA) already exists. Updating the image..."
+                      fi
+
+                      az webapp config container set --name $(webAppBackContainerNamePROD) --resource-group $(resourceGroupName) \
+                        --container-image-name $(acrLoginServer)/$(backImageName):$(backImageTag) \
+                        --container-registry-url https://$(acrLoginServer) \
+                        --container-registry-user $(acrName) \
+                        --container-registry-password $(az acr credential show --name $(acrName) --query "passwords[0].value" -o tsv)
+
+                      az webapp config appsettings set --name $(webAppBackContainerNamePROD) --resource-group $(resourceGroupName) \
+                        --settings ConnectionStrings__DefaultConnection="$(cnn-string-qa)" \
+
+      - deployment: FrontEnd
+        displayName: "Front-End"
+        environment: "Production"
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureCLI@2
+                  displayName: "Verify and create the Azure App Service resource for FRONT (PROD)"
+                  inputs:
+                    azureSubscription: "$(azureResourceManager)"
+                    scriptType: "bash"
+                    scriptLocation: "inlineScript"
+                    inlineScript: |
+                      if ! az webapp list --query "[?name=='$(webAppFrontContainerNamePROD)' && resourceGroup=='$(resourceGroupName)'] | length(@)" -o tsv | grep -q '^1$'; then
+                        echo "The App Service for Front-End (PROD) does not exist. Creating..."
+                        az webapp create --resource-group $(resourceGroupName) --plan $(appServicePlanLinux) --name $(webAppFrontContainerNamePROD) --deployment-container-image-name "nginx"
+                      else
+                        echo "The App Service for Front-End (PROD) already exists. Updating the image..."
+                      fi
+
+                      az webapp config container set --name $(webAppFrontContainerNamePROD) --resource-group $(resourceGroupName) \
+                        --container-image-name $(acrLoginServer)/$(frontImageName):$(frontImageTag) \
+                        --container-registry-url https://$(acrLoginServer) \
+                        --container-registry-user $(acrName) \
+                        --container-registry-password $(az acr credential show --name $(acrName) --query "passwords[0].value" -o tsv)
+
+                      az webapp config appsettings set --name $(webAppFrontContainerNamePROD) --resource-group $(resourceGroupName) \
+                        --settings API_URL="$(APPSERVICESCONTAINER_API_URL_QA)" \

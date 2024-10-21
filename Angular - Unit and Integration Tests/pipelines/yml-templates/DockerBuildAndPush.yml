@@ -1,0 +1,95 @@
+stages:
+  - stage: DockerBuildAndPush
+    displayName: "Build and Push Docker Images to ACR"
+    dependsOn: [BuildAndTest]
+    jobs:
+      - job: BackEnd
+        displayName: "Back-End"
+        dependsOn: []
+        pool:
+          vmImage: ubuntu-latest
+
+        steps:
+          - checkout: self
+
+          - task: DownloadPipelineArtifact@2
+            displayName: "Download Backend Artifacts"
+            inputs:
+              buildType: "current"
+              artifactName: "backend-drop"
+              targetPath: "$(Pipeline.Workspace)/backend-drop"
+
+          - task: DownloadPipelineArtifact@2
+            displayName: "Download Backend Dockerfile"
+            inputs:
+              buildType: "current"
+              artifactName: "dockerfile-back"
+              targetPath: "$(Pipeline.Workspace)/dockerfile-back"
+
+          - task: AzureCLI@2
+            displayName: "Login to Azure Container Registry (ACR)"
+            inputs:
+              azureSubscription: "$(azureResourceManager)"
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                az acr login --name $(acrLoginServer)
+
+          - task: Docker@2
+            displayName: "Build Docker Image for Backend"
+            inputs:
+              command: build
+              repository: $(acrLoginServer)/$(backImageName)
+              dockerfile: $(Pipeline.Workspace)/dockerfile-back/Dockerfile
+              buildContext: $(Pipeline.Workspace)/backend-drop
+              tags: "latest"
+
+          - task: Docker@2
+            displayName: "Push Backend Docker Image to ACR"
+            inputs:
+              command: push
+              repository: $(acrLoginServer)/$(backImageName)
+              tags: "latest"
+
+      - job: FrontEnd
+        displayName: "Front-End"
+        dependsOn: []
+        steps:
+          - task: DownloadPipelineArtifact@2
+            displayName: "Download Frontend Artifacts"
+            inputs:
+              buildType: "current"
+              artifactName: "frontend-drop"
+              targetPath: "$(Pipeline.Workspace)/frontend-drop"
+
+          - task: DownloadPipelineArtifact@2
+            displayName: "Download Frontend Dockerfile"
+            inputs:
+              buildType: "current"
+              artifactName: "dockerfile-front"
+              targetPath: "$(Pipeline.Workspace)/dockerfile-front"
+
+          - task: AzureCLI@2
+            displayName: "Login to Azure Container Registry (ACR)"
+            inputs:
+              azureSubscription: "$(azureResourceManager)"
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                az acr login --name $(acrLoginServer)
+
+          - task: Docker@2
+            displayName: "Build Docker Image for Frontend"
+            inputs:
+              command: build
+              repository: $(acrLoginServer)/$(frontImageName)
+              dockerfile: $(Pipeline.Workspace)/dockerfile-front/Dockerfile
+              buildContext: $(Pipeline.Workspace)/frontend-drop
+              tags: "latest"
+
+          - task: Docker@2
+            displayName: "Push Frontend Docker Image to ACR"
+            inputs:
+              command: push
+              repository: $(acrLoginServer)/$(frontImageName)
+              tags: "latest"

@@ -1,0 +1,74 @@
+stages:
+  - stage: DeployToContainerAppsPROD
+    displayName: "[PROD] - Deploy Images to Container Apps"
+    dependsOn: [DeployToContainerAppsQA]
+    jobs:
+      - deployment: BackEnd
+        displayName: "Back-End"
+        environment: "Production"
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureCLI@2
+                  displayName: "Deploy Back-End Image To Container Apps"
+                  inputs:
+                    azureSubscription: "$(azureResourceManager)"
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      echo "Resource Group: $(resourceGroupName)"
+                      echo "Container App Name: $(containerAppsBackNamePROD)"
+                      echo "ACR Login Server: $(acrLoginServer)"
+                      echo "Image Name: $(backImageName)"
+                      echo "Image Tag: $(backImageTag)"
+                      echo "Connection String: $(cnn-string-qa)"
+
+                      az containerapp create \
+                        --resource-group $(resourceGroupName) \
+                        --name $(containerAppsBackNamePROD) \
+                        --environment $(containerAppsEnv) \
+                        --image $(acrLoginServer)/$(backImageName):$(backImageTag) \
+                        --registry-server $(acrLoginServer) \
+                        --registry-username $(acrName) \
+                        --registry-password $(az acr credential show --name $(acrName) --query "passwords[0].value" -o tsv) \
+                        --cpu 0.25 \
+                        --memory 0.5 \
+                        --env-vars ConnectionStrings__DefaultConnection="$(cnn-string-prod)" \
+                        --ingress 'external' \
+                        --target-port 80
+
+      - deployment: FrontEnd
+        displayName: "Front-End"
+        environment: "Production"
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureCLI@2
+                  displayName: "Deploy Front-End Image To Container Apps"
+                  inputs:
+                    azureSubscription: "$(azureResourceManager)"
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      echo "Resource Group: $(resourceGroupName)"
+                      echo "Container App Name: $(containerAppsFrontNamePROD)"
+                      echo "ACR Login Server: $(acrLoginServer)"
+                      echo "Image Name: $(frontImageName)"
+                      echo "Image Tag: $(frontImageTag)"
+                      echo "Api Url: $(API_URL_QA)"
+
+                      az containerapp create \
+                        --resource-group $(resourceGroupName) \
+                        --name $(containerAppsFrontNamePROD) \
+                        --environment $(containerAppsEnv) \
+                        --image $(acrLoginServer)/$(frontImageName):$(frontImageTag) \
+                        --registry-server $(acrLoginServer) \
+                        --registry-username $(acrName) \
+                        --registry-password $(az acr credential show --name $(acrName) --query "passwords[0].value" -o tsv) \
+                        --cpu 0.25 \
+                        --memory 0.5 \
+                        --env-vars API_URL="$(CONTAINERAPPS_API_URL_PROD)" \
+                        --ingress 'external' \
+                        --target-port 80
